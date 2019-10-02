@@ -124,7 +124,7 @@ module.exports = {
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "build": "parcel --no-source-maps -t node -o main.js main.ts"
+    "build": "parcel --no-source-maps -t node -d . -o main.js main.ts"
   },
   "dependencies": {
     "@types/chalk": "^2.2.0",
