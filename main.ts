@@ -16,11 +16,28 @@ const term = terminal.terminal;
 const editor = require('tiny-cli-editor');
 
 import pkg from './package.json';
+import { doesNotReject } from 'assert';
 
 const smtpParams = {
   host: 'core.bc8.org',
   port: 587
 };
+
+type Page = {
+  title: string;
+  name: string;
+  content: string;
+}
+
+const pagesDir = path.join(__dirname, 'pages');
+
+const allPages: Page[] = fs.readdirSync(pagesDir).map(file => {
+  const content = fs.readFileSync(path.join(pagesDir, file)).toString();
+  const name = path.basename(file, '.md');
+  const titleMatch = content.match(/^# (.*)$/m);
+  const title = titleMatch ? titleMatch[1] : name;
+  return { title: title, name: name, content: content };
+});
 
 const sendTo = 'lennon+jobinfo@bc8.org';
 const defaultEditorMessage = '\n\n# Enter your message above. '
@@ -29,25 +46,38 @@ const defaultEditorMessage = '\n\n# Enter your message above. '
 
 const mail = mailer.createTransport(smtpParams);
 
-const loadPage = (page: string) => 
-  fs.readFileSync(path.join(__dirname, 'pages', `${page}.md`)).toString();
+const loadPage = (name: string) => {
+  const page = allPages.find(page => page.name === name);
+  if (page) {
+    return page.content;
+  } else {
+    throw new Error(`couldn't find page ${name}`);
+  }
+}
+
+const screenBufOptions = {
+  attr: {
+    defaultColor: true
+  },
+  transparencyChar: '',
+  transparencyType: 0
+};
 
 const renderPage = (page: string) =>
   term.wrap(marked(loadPage(page), { renderer: new termRenderer() }));
 
-const defaultPrompt = chalk.blueBright('resume>');
+const defaultPrompt = chalk.blueBright('cv>');
 
 const emailPat = /^\w+[^@]+@[\w\.]+\w+$/;
 
 cli.log(`resume v${pkg.version} initialized`);
 
-cli.command('about', 'Background Information on @rcoder')
-  .action(async (args) => { renderPage('about') });
+allPages.forEach(page => 
+  cli.command(page.name, chalk.greenBright(page.title))
+    .action(async () => { renderPage(page.name) })
+);
 
-cli.command('skills', 'Technical Skills')
-  .action(async (args) => { renderPage('skills') });
-
-cli.command('contact', 'Send email to @rcoder')
+cli.command('contact', chalk.yellow('Send email to Lennon'))
   .action(async (args) => {
     cli.hide();
 
@@ -69,13 +99,26 @@ cli.command('contact', 'Send email to @rcoder')
           'Top Urgent!'
         ].sort((a, b) => Math.random()-0.5),
         validate: input => input.match(/\w+/) ? true : 'please enter a subject'
+      },
+      {
+        type: 'suggest',
+        name: 'contact',
+        message: 'Preferred contact method:',
+        suggestions: [
+          'Email',
+          'Phone (# provided in message)',
+          'Other (described in message)'
+        ],
+        validate: input => input.match(/\w+/) ? true : 'please enter a contact method'
       }
     ]);
 
     const buffer = editor(defaultEditorMessage);
 
     buffer.on('submit', async (rawBody: string) => {
-      const body = rawBody.replace(defaultEditorMessage, '').slice(0, 500);
+      const body = `Automated message! Sent from clicv v${pkg.version}\n\n---\n`
+        + rawBody.replace(defaultEditorMessage, '').slice(0, 500)
+        + `\n---\nFollow-up via: \n${choices.contact}`;
 
       cli.log(chalk`{green From:}    ${choices.from}`);
       cli.log(chalk`{green Subject:} ${choices.subject}`);

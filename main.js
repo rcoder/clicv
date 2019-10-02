@@ -347,12 +347,40 @@ var smtpParams = {
   host: 'core.bc8.org',
   port: 587
 };
+var pagesDir = path_1.default.join(__dirname, 'pages');
+var allPages = fs_1.default.readdirSync(pagesDir).map(function (file) {
+  var content = fs_1.default.readFileSync(path_1.default.join(pagesDir, file)).toString();
+  var name = path_1.default.basename(file, '.md');
+  var titleMatch = content.match(/^# (.*)$/m);
+  var title = titleMatch ? titleMatch[1] : name;
+  return {
+    title: title,
+    name: name,
+    content: content
+  };
+});
 var sendTo = 'lennon+jobinfo@bc8.org';
 var defaultEditorMessage = '\n\n# Enter your message above. ' + 'Type Ctrl-D to save and finish, or Ctrl-C to cancel.\n' + '# These lines will be removed automatically.';
 var mail = nodemailer_1.default.createTransport(smtpParams);
 
-var loadPage = function (page) {
-  return fs_1.default.readFileSync(path_1.default.join(__dirname, 'pages', page + ".md")).toString();
+var loadPage = function (name) {
+  var page = allPages.find(function (page) {
+    return page.name === name;
+  });
+
+  if (page) {
+    return page.content;
+  } else {
+    throw new Error("couldn't find page " + name);
+  }
+};
+
+var screenBufOptions = {
+  attr: {
+    defaultColor: true
+  },
+  transparencyChar: '',
+  transparencyType: 0
 };
 
 var renderPage = function (page) {
@@ -361,30 +389,22 @@ var renderPage = function (page) {
   }));
 };
 
-var defaultPrompt = chalk_1.default.blueBright('resume>');
+var defaultPrompt = chalk_1.default.blueBright('cv>');
 var emailPat = /^\w+[^@]+@[\w\.]+\w+$/;
 cli.log("resume v" + package_json_1.default.version + " initialized");
-cli.command('about', 'Background Information on @rcoder').action(function (args) {
-  return __awaiter(void 0, void 0, void 0, function () {
-    return __generator(this, function (_a) {
-      renderPage('about');
-      return [2
-      /*return*/
-      ];
+allPages.forEach(function (page) {
+  return cli.command(page.name, chalk_1.default.greenBright(page.title)).action(function () {
+    return __awaiter(void 0, void 0, void 0, function () {
+      return __generator(this, function (_a) {
+        renderPage(page.name);
+        return [2
+        /*return*/
+        ];
+      });
     });
   });
 });
-cli.command('skills', 'Technical Skills').action(function (args) {
-  return __awaiter(void 0, void 0, void 0, function () {
-    return __generator(this, function (_a) {
-      renderPage('skills');
-      return [2
-      /*return*/
-      ];
-    });
-  });
-});
-cli.command('contact', 'Send email to @rcoder').action(function (args) {
+cli.command('contact', chalk_1.default.yellow('Send email to Lennon')).action(function (args) {
   return __awaiter(void 0, void 0, void 0, function () {
     var choices, buffer;
     return __generator(this, function (_a) {
@@ -410,6 +430,14 @@ cli.command('contact', 'Send email to @rcoder').action(function (args) {
             validate: function (input) {
               return input.match(/\w+/) ? true : 'please enter a subject';
             }
+          }, {
+            type: 'suggest',
+            name: 'contact',
+            message: 'Preferred contact method:',
+            suggestions: ['Email', 'Phone (# provided in message)', 'Other (described in message)'],
+            validate: function (input) {
+              return input.match(/\w+/) ? true : 'please enter a contact method';
+            }
           }])];
 
         case 1:
@@ -421,7 +449,7 @@ cli.command('contact', 'Send email to @rcoder').action(function (args) {
               return __generator(this, function (_a) {
                 switch (_a.label) {
                   case 0:
-                    body = rawBody.replace(defaultEditorMessage, '').slice(0, 500);
+                    body = "Automated message! Sent from clicv v" + package_json_1.default.version + "\n\n---\n" + rawBody.replace(defaultEditorMessage, '').slice(0, 500) + ("\n---\nFollow-up via: \n" + choices.contact);
                     cli.log(chalk_1.default(templateObject_1 || (templateObject_1 = __makeTemplateObject(["{green From:}    ", ""], ["{green From:}    ", ""])), choices.from));
                     cli.log(chalk_1.default(templateObject_2 || (templateObject_2 = __makeTemplateObject(["{green Subject:} ", ""], ["{green Subject:} ", ""])), choices.subject));
                     cli.log(chalk_1.default(templateObject_3 || (templateObject_3 = __makeTemplateObject(["{green Message:}\n"], ["{green Message:}\\n"]))));

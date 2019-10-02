@@ -1,3 +1,5 @@
+# Skills
+
 ## Software Development
 * Building and maintaining quality software using a wide variety of tools
 * Languages: `Python`, `Java`, `JavaScript`/`TypeScript`, `Ruby`, `Scala`, `C`
