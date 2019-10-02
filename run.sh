@@ -2,4 +2,4 @@
 
 set -e
 
-./vendor/ttyd_linux.x86_64 ts-node main.ts
+./vendor/ttyd_linux.x86_64 node dist/main.js
