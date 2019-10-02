@@ -124,6 +124,7 @@ module.exports = {
   "main": "index.js",
   "license": "MIT",
   "scripts": {
+    "pretty": "prettier --write --single-quote main.ts",
     "build": "parcel --no-source-maps -t node -d . -o main.js main.ts"
   },
   "dependencies": {
@@ -143,12 +144,14 @@ module.exports = {
     "marked-terminal": "^3.3.0",
     "nodemailer": "^6.3.0",
     "parcel-bundler": "^1.12.3",
+    "prettier": "^1.18.2",
     "terminal-kit": "^1.31.4",
     "tiny-cli-editor": "^0.1.1",
     "tmp": "^0.1.0",
     "ts-node": "^8.4.1",
     "typescript": "^3.6.3",
-    "vorpal": "^1.12.0"
+    "vorpal": "^1.12.0",
+    "winston": "^3.2.1"
   }
 };
 },{}],"main.ts":[function(require,module,exports) {
@@ -164,6 +167,20 @@ var __makeTemplateObject = this && this.__makeTemplateObject || function (cooked
   }
 
   return cooked;
+};
+
+var __assign = this && this.__assign || function () {
+  __assign = Object.assign || function (t) {
+    for (var s, i = 1, n = arguments.length; i < n; i++) {
+      s = arguments[i];
+
+      for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
+    }
+
+    return t;
+  };
+
+  return __assign.apply(this, arguments);
 };
 
 var __awaiter = this && this.__awaiter || function (thisArg, _arguments, P, generator) {
@@ -331,34 +348,38 @@ var marked_terminal_1 = __importDefault(require("marked-terminal"));
 
 var nodemailer_1 = __importDefault(require("nodemailer"));
 
+var winston_1 = require("winston");
+
 var path_1 = __importDefault(require("path"));
 
 var fs_1 = __importDefault(require("fs"));
 
-inquirer_1.default.registerPrompt('suggest', require('inquirer-prompt-suggest'));
-var cli = new vorpal_1.default();
-var term = terminal_kit_1.default.terminal;
-
-var editor = require('tiny-cli-editor');
+var crypto_1 = require("crypto");
 
 var package_json_1 = __importDefault(require("./package.json"));
 
+var editor = require('tiny-cli-editor');
+
+var cli = new vorpal_1.default();
+var term = terminal_kit_1.default.terminal;
+inquirer_1.default.registerPrompt('suggest', require('inquirer-prompt-suggest'));
+var sessionId = new Date().getTime() + "-" + crypto_1.randomBytes(4).toString('hex');
+var injectSession = winston_1.format(function (info, _) {
+  return __assign(__assign({}, info), {
+    session: sessionId
+  });
+});
+var log = winston_1.createLogger({
+  transports: [new winston_1.transports.File({
+    filename: 'clicv.log'
+  })],
+  format: winston_1.format.combine(winston_1.format.json(), injectSession())
+});
+var pagesDir = path_1.default.join(__dirname, 'pages');
 var smtpParams = {
   host: 'core.bc8.org',
   port: 587
 };
-var pagesDir = path_1.default.join(__dirname, 'pages');
-var allPages = fs_1.default.readdirSync(pagesDir).map(function (file) {
-  var content = fs_1.default.readFileSync(path_1.default.join(pagesDir, file)).toString();
-  var name = path_1.default.basename(file, '.md');
-  var titleMatch = content.match(/^# (.*)$/m);
-  var title = titleMatch ? titleMatch[1] : name;
-  return {
-    title: title,
-    name: name,
-    content: content
-  };
-});
 var sendTo = 'lennon+jobinfo@bc8.org';
 var defaultEditorMessage = '\n\n# Enter your message above. ' + 'Type Ctrl-D to save and finish, or Ctrl-C to cancel.\n' + '# These lines will be removed automatically.';
 var mail = nodemailer_1.default.createTransport(smtpParams);
@@ -391,11 +412,29 @@ var renderPage = function (page) {
 
 var defaultPrompt = chalk_1.default.blueBright('cv>');
 var emailPat = /^\w+[^@]+@[\w\.]+\w+$/;
+log.info("starting session");
 cli.log("resume v" + package_json_1.default.version + " initialized");
+var allPages = fs_1.default.readdirSync(pagesDir).map(function (file) {
+  var content = fs_1.default.readFileSync(path_1.default.join(pagesDir, file)).toString();
+  var name = path_1.default.basename(file, '.md');
+  var titleMatch = content.match(/^# (.*)$/m);
+  var title = titleMatch ? titleMatch[1] : name;
+  return {
+    title: title,
+    name: name,
+    content: content
+  };
+});
+log.info("found " + allPages.length + " pages", {
+  pages: allPages.map(function (page) {
+    return page.name;
+  })
+});
 allPages.forEach(function (page) {
   return cli.command(page.name, chalk_1.default.greenBright(page.title)).action(function () {
     return __awaiter(void 0, void 0, void 0, function () {
       return __generator(this, function (_a) {
+        log.info("Loading page " + page.name);
         renderPage(page.name);
         return [2
         /*return*/
@@ -410,6 +449,7 @@ cli.command('contact', chalk_1.default.yellow('Send email to Lennon')).action(fu
     return __generator(this, function (_a) {
       switch (_a.label) {
         case 0:
+          log.info('Starting message editor');
           cli.hide();
           return [4
           /*yield*/
@@ -434,7 +474,7 @@ cli.command('contact', chalk_1.default.yellow('Send email to Lennon')).action(fu
             type: 'suggest',
             name: 'contact',
             message: 'Preferred contact method:',
-            suggestions: ['Email', 'Phone (# provided in message)', 'Other (described in message)'],
+            suggestions: ['Email', 'Phone (provided in message)', 'Other (described in message)'],
             validate: function (input) {
               return input.match(/\w+/) ? true : 'please enter a contact method';
             }
@@ -445,11 +485,11 @@ cli.command('contact', chalk_1.default.yellow('Send email to Lennon')).action(fu
           buffer = editor(defaultEditorMessage);
           buffer.on('submit', function (rawBody) {
             return __awaiter(void 0, void 0, void 0, function () {
-              var body, doit;
+              var body, doit, message;
               return __generator(this, function (_a) {
                 switch (_a.label) {
                   case 0:
-                    body = "Automated message! Sent from clicv v" + package_json_1.default.version + "\n\n---\n" + rawBody.replace(defaultEditorMessage, '').slice(0, 500) + ("\n---\nFollow-up via: \n" + choices.contact);
+                    body = ["Automated message sent from clicv v" + package_json_1.default.version, '---', rawBody.replace(defaultEditorMessage, '').slice(0, 500), '---', "Follow-up via: " + choices.contact].join('\n');
                     cli.log(chalk_1.default(templateObject_1 || (templateObject_1 = __makeTemplateObject(["{green From:}    ", ""], ["{green From:}    ", ""])), choices.from));
                     cli.log(chalk_1.default(templateObject_2 || (templateObject_2 = __makeTemplateObject(["{green Subject:} ", ""], ["{green Subject:} ", ""])), choices.subject));
                     cli.log(chalk_1.default(templateObject_3 || (templateObject_3 = __makeTemplateObject(["{green Message:}\n"], ["{green Message:}\\n"]))));
@@ -469,14 +509,16 @@ cli.command('contact', chalk_1.default.yellow('Send email to Lennon')).action(fu
                     if (!doit) return [3
                     /*break*/
                     , 3];
-                    return [4
-                    /*yield*/
-                    , mail.sendMail({
+                    message = {
                       to: sendTo,
                       from: choices.from,
                       subject: choices.subject,
                       text: body
-                    })];
+                    };
+                    log.info('sending message', message);
+                    return [4
+                    /*yield*/
+                    , mail.sendMail(message)];
 
                   case 2:
                     _a.sent();
@@ -512,5 +554,6 @@ cli.command('contact', chalk_1.default.yellow('Send email to Lennon')).action(fu
 });
 cli.exec('help');
 cli.delimiter(defaultPrompt).show();
+log.info('exiting');
 var templateObject_1, templateObject_2, templateObject_3;
 },{"./package.json":"package.json"}]},{},["main.ts"], null)
