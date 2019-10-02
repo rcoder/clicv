@@ -5,22 +5,35 @@ import inquirer from 'inquirer';
 import terminal from 'terminal-kit';
 import termRenderer from 'marked-terminal';
 import mailer from 'nodemailer';
+import { createLogger, transports, format } from 'winston';
 import path from 'path';
 import fs from 'fs';
+import { randomBytes } from 'crypto';
 
-inquirer.registerPrompt('suggest', require('inquirer-prompt-suggest'));
+import pkg from './package.json';
+
+const editor = require('tiny-cli-editor');
 
 const cli = new vorpal();
 const term = terminal.terminal;
 
-const editor = require('tiny-cli-editor');
+inquirer.registerPrompt('suggest', require('inquirer-prompt-suggest'));
 
-import pkg from './package.json';
+const sessionId = `${new Date().getTime()}-${randomBytes(4).toString('hex')}`;
 
-const smtpParams = {
-  host: 'core.bc8.org',
-  port: 587
-};
+const injectSession = format((info, _) =>
+  ({ ...info, session: sessionId})
+);
+
+const log = createLogger({
+  transports: [
+    new transports.File({ filename: 'clicv.log'})
+  ],
+  format: format.combine(
+    format.json(),
+    injectSession()
+  )
+});
 
 type Page = {
   title: string;
@@ -30,15 +43,13 @@ type Page = {
 
 const pagesDir = path.join(__dirname, 'pages');
 
-const allPages: Page[] = fs.readdirSync(pagesDir).map(file => {
-  const content = fs.readFileSync(path.join(pagesDir, file)).toString();
-  const name = path.basename(file, '.md');
-  const titleMatch = content.match(/^# (.*)$/m);
-  const title = titleMatch ? titleMatch[1] : name;
-  return { title: title, name: name, content: content };
-});
+const smtpParams = {
+  host: 'core.bc8.org',
+  port: 587
+};
 
 const sendTo = 'lennon+jobinfo@bc8.org';
+
 const defaultEditorMessage = '\n\n# Enter your message above. '
   + 'Type Ctrl-D to save and finish, or Ctrl-C to cancel.\n'
   + '# These lines will be removed automatically.';
@@ -69,15 +80,34 @@ const defaultPrompt = chalk.blueBright('cv>');
 
 const emailPat = /^\w+[^@]+@[\w\.]+\w+$/;
 
+log.info(`starting session`);
+
 cli.log(`resume v${pkg.version} initialized`);
+
+const allPages: Page[] = fs.readdirSync(pagesDir).map(file => {
+  const content = fs.readFileSync(path.join(pagesDir, file)).toString();
+  const name = path.basename(file, '.md');
+  const titleMatch = content.match(/^# (.*)$/m);
+  const title = titleMatch ? titleMatch[1] : name;
+  return { title: title, name: name, content: content };
+});
+
+log.info(`found ${allPages.length} pages`, {
+  pages: allPages.map(page => page.name)
+});
 
 allPages.forEach(page => 
   cli.command(page.name, chalk.greenBright(page.title))
-    .action(async () => { renderPage(page.name) })
+    .action(async () => {
+      log.info(`Loading page ${page.name}`);
+      renderPage(page.name)
+    })
 );
 
 cli.command('contact', chalk.yellow('Send email to Lennon'))
   .action(async (args) => {
+    log.info('Starting message editor');
+
     cli.hide();
 
     const choices = await inquirer.prompt([
@@ -105,7 +135,7 @@ cli.command('contact', chalk.yellow('Send email to Lennon'))
         message: 'Preferred contact method:',
         suggestions: [
           'Email',
-          'Phone (# provided in message)',
+          'Phone (provided in message)',
           'Other (described in message)'
         ],
         validate: input => input.match(/\w+/) ? true : 'please enter a contact method'
@@ -115,9 +145,13 @@ cli.command('contact', chalk.yellow('Send email to Lennon'))
     const buffer = editor(defaultEditorMessage);
 
     buffer.on('submit', async (rawBody: string) => {
-      const body = `Automated message! Sent from clicv v${pkg.version}\n\n---\n`
-        + rawBody.replace(defaultEditorMessage, '').slice(0, 500)
-        + `\n---\nFollow-up via: \n${choices.contact}`;
+      const body = [
+        `Automated message sent from clicv v${pkg.version}`,
+        '---',
+        rawBody.replace(defaultEditorMessage, '').slice(0, 500),
+        '---',
+        `Follow-up via: ${choices.contact}`
+      ].join('\n');
 
       cli.log(chalk`{green From:}    ${choices.from}`);
       cli.log(chalk`{green Subject:} ${choices.subject}`);
@@ -135,12 +169,16 @@ cli.command('contact', chalk.yellow('Send email to Lennon'))
       ]);
 
       if (doit) {
-        await mail.sendMail({
+        const message = {
           to: sendTo,
           from: choices.from,
           subject: choices.subject,
           text: body
-        });
+        };
+
+        log.info('sending message', message);
+
+        await mail.sendMail(message);
         cli.log('Email sent!');
       }
 
@@ -154,3 +192,5 @@ cli.command('contact', chalk.yellow('Send email to Lennon'))
 
 cli.exec('help');
 cli.delimiter(defaultPrompt).show();
+
+log.info(`exiting`);
