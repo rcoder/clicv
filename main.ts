@@ -1,15 +1,21 @@
-import Vorpal from 'vorpal';
-import Marked from 'marked';
-import Chalk from 'chalk';
-import Inquirer from 'inquirer';
-import Terminal from 'terminal-kit';
-import TerminalRenderer from 'marked-terminal';
-import NodeMailer from 'nodemailer';
+import vorpal from 'vorpal';
+import marked from 'marked';
+import chalk from 'chalk';
+import inquirer from 'inquirer';
+import terminal from 'terminal-kit';
+import termRenderer from 'marked-terminal';
+import mailer from 'nodemailer';
 import path from 'path';
 import fs from 'fs';
 
-const v = new Vorpal();
-const t = Terminal.terminal;
+inquirer.registerPrompt('suggest', require('inquirer-prompt-suggest'));
+
+const cli = new vorpal();
+const term = terminal.terminal;
+
+const editor = require('tiny-cli-editor');
+
+import pkg from './package.json';
 
 const smtpParams = {
   host: 'core.bc8.org',
@@ -17,28 +23,35 @@ const smtpParams = {
 };
 
 const sendTo = 'lennon+jobinfo@bc8.org';
+const defaultEditorMessage = '\n\n# Enter your message above. '
+  + 'Type Ctrl-D to save and finish, or Ctrl-C to cancel.\n'
+  + '# These lines will be removed automatically.';
 
-const m = NodeMailer.createTransport(smtpParams);
+const mail = mailer.createTransport(smtpParams);
 
 const loadPage = (page: string) => 
   fs.readFileSync(path.join(__dirname, 'pages', `${page}.md`)).toString();
 
 const renderPage = (page: string) =>
-  t.wrap(Marked(loadPage(page), { renderer: new TerminalRenderer() }))
+  term.wrap(marked(loadPage(page), { renderer: new termRenderer() }));
 
-const defaultPrompt = Chalk.blueBright('rcoder>');
+const defaultPrompt = chalk.blueBright('resume>');
 
 const emailPat = /^\w+[^@]+@[\w\.]+\w+$/;
 
-v.command('about', 'Background Information on @rcoder')
+cli.log(`resume v${pkg.version} initialized`);
+
+cli.command('about', 'Background Information on @rcoder')
   .action(async (args) => { renderPage('about') });
 
-v.command('skills', 'Technical Skills')
+cli.command('skills', 'Technical Skills')
   .action(async (args) => { renderPage('skills') });
 
-v.command('contact', 'Send email to @rcoder')
+cli.command('contact', 'Send email to @rcoder')
   .action(async (args) => {
-    const choices = await Inquirer.prompt([
+    cli.hide();
+
+    const choices = await inquirer.prompt([
       {
         type: 'input',
         name: 'from',
@@ -46,34 +59,56 @@ v.command('contact', 'Send email to @rcoder')
         validate: input => input.match(emailPat) ? true : 'please enter an email address'
       },
       {
-        type: 'subject',
+        type: 'suggest',
         name: 'subject',
         message: 'Subject:',
-        default: 'reaching out',
+        suggestions: [
+          'Question',
+          'Job Opening',
+          'Introduction',
+          'Top Urgent!'
+        ].sort((a, b) => Math.random()-0.5),
         validate: input => input.match(/\w+/) ? true : 'please enter a subject'
-      },
-      {
-        type: 'editor',
-        name: 'body',
-        validate: input => input.length > 0
-      },
-      {
-        type: 'confirm',
-        name: 'doit',
-        message: 'Send?',
-        default: true
       }
-    ])
-    if (choices.doit) {
-      await m.sendMail({
-        to: sendTo,
-        from: choices.from,
-        subject: choices.subject,
-        text: choices.body
-      });
-      v.log('Email sent!');
-    }
+    ]);
+
+    const buffer = editor(defaultEditorMessage);
+
+    buffer.on('submit', async (rawBody: string) => {
+      const body = rawBody.replace(defaultEditorMessage, '').slice(0, 500);
+
+      cli.log(chalk`{green From:}    ${choices.from}`);
+      cli.log(chalk`{green Subject:} ${choices.subject}`);
+      cli.log(chalk`{green Message:}\n`);
+      cli.log(body);
+      cli.log('\n');
+
+      const { doit } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'doit',
+          message: 'Send?',
+          default: true
+        }
+      ]);
+
+      if (doit) {
+        await mail.sendMail({
+          to: sendTo,
+          from: choices.from,
+          subject: choices.subject,
+          text: body
+        });
+        cli.log('Email sent!');
+      }
+
+      cli.show();
+    });
+
+    buffer.on('abort', async () => {
+      cli.show();
+    });
   });
 
-v.exec('help');
-v.delimiter(defaultPrompt).show();
+cli.exec('help');
+cli.delimiter(defaultPrompt).show();
