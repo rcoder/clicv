@@ -16,7 +16,6 @@ const term = terminal.terminal;
 const editor = require('tiny-cli-editor');
 
 import pkg from './package.json';
-import { doesNotReject } from 'assert';
 
 const smtpParams = {
   host: 'core.bc8.org',
